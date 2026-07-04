@@ -1,1 +1,9 @@
 .env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Go
+service-data/server
