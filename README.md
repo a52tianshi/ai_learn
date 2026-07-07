@@ -47,6 +47,21 @@ uv sync
 uv run python main.py
 ```
 
+### 4. 快捷脚本一键后台启停（推荐）
+为了方便您在后台同时运行 Go 服务和 Python 机器人，项目根目录下提供了快捷脚本：
+
+*   **一键后台启动**（自动检测 Go 服务和 Python 机器人，在后台启动它们并重定向日志）：
+    ```bash
+    ./run.sh
+    ```
+*   **查看运行日志**：
+    - 查看 Go 数据服务日志：`tail -f service-data.log`
+    - 查看 Python 机器人日志：`tail -f wordbot.log`
+*   **一键关闭所有服务**（优雅停用后台进程并清理 PID 文件）：
+    ```bash
+    ./stop.sh
+    ```
+
 在 Telegram 里对你的 bot:直接发单词即可查询收藏。
 
 ## Bot 命令
