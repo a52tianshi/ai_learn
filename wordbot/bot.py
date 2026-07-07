@@ -10,6 +10,7 @@ from telegram import (
     Update,
 )
 from telegram.constants import ChatAction
+from telegram.request import HTTPXRequest
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
@@ -204,13 +205,15 @@ def main() -> None:
     token = config.require_bot_token()
 
     # Force outbound traffic to use IPv4 to avoid broken IPv6 routes on some VPS hosts
-    transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
-    custom_client = httpx.AsyncClient(transport=transport)
+    custom_transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
+    request_class = HTTPXRequest(
+        httpx_kwargs={"transport": custom_transport}
+    )
 
     app = (
         Application.builder()
         .token(token)
-        .httpx_client(custom_client)
+        .request(request_class)
         .post_init(_post_init)
         .post_shutdown(_post_shutdown)
         .build()
