@@ -42,13 +42,18 @@ echo "正在检查 Go 数据服务 (端口 8080)..."
 if lsof -i :8080 > /dev/null 2>&1; then
     echo "  • Go 数据服务已经在运行中。"
 else
-    echo "  • 正在后台启动 Go 数据服务..."
+    echo "  • 正在编译 Go 数据服务..."
     cd service-data
-    
-    # Check if there is any .env we should load DSN from
     load_env "../.env"
     
-    nohup go run cmd/server/main.go > ../service-data.log 2>&1 &
+    if ! go build -o server cmd/server/main.go; then
+        echo "  ❌ Go 数据服务编译失败！请检查编译错误。"
+        cd ..
+        exit 1
+    fi
+    
+    echo "  • 正在后台启动 Go 数据服务..."
+    nohup ./server > ../service-data.log 2>&1 &
     GO_PID=$!
     cd ..
     echo $GO_PID > service-data.pid
