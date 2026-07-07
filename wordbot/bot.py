@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import httpx
 
 from telegram import (
     InlineKeyboardButton,
@@ -202,9 +203,14 @@ def main() -> None:
     config.setup_logging()
     token = config.require_bot_token()
 
+    # Force outbound traffic to use IPv4 to avoid broken IPv6 routes on some VPS hosts
+    transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0")
+    custom_client = httpx.AsyncClient(transport=transport)
+
     app = (
         Application.builder()
         .token(token)
+        .httpx_client(custom_client)
         .post_init(_post_init)
         .post_shutdown(_post_shutdown)
         .build()

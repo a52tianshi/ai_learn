@@ -14,12 +14,21 @@ load_env() {
             # Skip empty lines, comments
             if [[ ! "$line" =~ ^[[:space:]]*# && -n "$line" && "$line" == *"="* ]]; then
                 key=$(echo "$line" | cut -d'=' -f1 | xargs)
-                value=$(echo "$line" | cut -d'=' -f2- | xargs)
-                # Remove surrounding quotes
-                value="${value%\"}"
-                value="${value#\"}"
-                value="${value%\'}"
-                value="${value#\'}"
+                value=$(echo "$line" | cut -d'=' -f2-)
+                
+                # Trim leading spaces
+                value=$(echo "$value" | sed -e 's/^[[:space:]]*//')
+                
+                # Check for quotes
+                if [[ "$value" =~ ^\" ]]; then
+                    value=$(echo "$value" | cut -d'"' -f2)
+                elif [[ "$value" =~ ^\' ]]; then
+                    value=$(echo "$value" | cut -d"'" -f2)
+                else
+                    # Unquoted: strip any inline comment starting with #
+                    value=$(echo "$value" | cut -d'#' -f1 | xargs)
+                fi
+                
                 if [ -n "$key" ]; then
                     export "$key=$value"
                 fi
