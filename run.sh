@@ -4,6 +4,30 @@
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$DIR"
 
+# Helper function to load env variables from file without bash errors on comments/spaces
+load_env() {
+    local env_file="$1"
+    if [ -f "$env_file" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+            # Strip carriage return
+            line=$(echo "$line" | tr -d '\r')
+            # Skip empty lines, comments
+            if [[ ! "$line" =~ ^[[:space:]]*# && -n "$line" && "$line" == *"="* ]]; then
+                key=$(echo "$line" | cut -d'=' -f1 | xargs)
+                value=$(echo "$line" | cut -d'=' -f2- | xargs)
+                # Remove surrounding quotes
+                value="${value%\"}"
+                value="${value#\"}"
+                value="${value%\'}"
+                value="${value#\'}"
+                if [ -n "$key" ]; then
+                    export "$key=$value"
+                fi
+            fi
+        done < "$env_file"
+    fi
+}
+
 # 1. Start Go Data Service
 echo "正在检查 Go 数据服务 (端口 8080)..."
 if lsof -i :8080 > /dev/null 2>&1; then
@@ -13,10 +37,7 @@ else
     cd service-data
     
     # Check if there is any .env we should load DSN from
-    if [ -f "../.env" ]; then
-        # Export MYSQL_DSN if present
-        export $(grep -v '^#' ../.env | grep MYSQL_DSN | xargs)
-    fi
+    load_env "../.env"
     
     nohup go run cmd/server/main.go > ../service-data.log 2>&1 &
     GO_PID=$!
@@ -42,9 +63,7 @@ fi
 
 echo "  • 正在后台启动 Python 单词本机器人..."
 # Load environment variables from .env if exists
-if [ -f ".env" ]; then
-    export $(grep -v '^#' .env | xargs)
-fi
+load_env ".env"
 
 nohup uv run python main.py > wordbot.log 2>&1 &
 PY_PID=$!
