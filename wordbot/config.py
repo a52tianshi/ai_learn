@@ -15,7 +15,7 @@ TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 DATA_API_BASE = os.getenv("DATA_API_BASE", "http://127.0.0.1:8080").rstrip("/")
 
 # LLM(仅推荐阅读用)
-MODEL = os.getenv("MODEL", "gemini-2.5-flash")
+MODEL = os.getenv("MODEL", "gemini-3.1-flash-lite")
 # langchain-google-genai 读取 GOOGLE_API_KEY;这里只做存在性检查
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 

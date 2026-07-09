@@ -33,7 +33,7 @@ func main() {
 	}
 
 	googleAPIKey := env("GOOGLE_API_KEY", "")
-	modelName := env("MODEL", "gemini-2.5-flash")
+	modelName := env("MODEL", "gemini-3.1-flash-lite")
 	srv := api.New(store.New(db), dict.New(dictBase, googleAPIKey, modelName))
 	httpSrv := &http.Server{
 		Addr:              addr,
