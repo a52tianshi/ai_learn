@@ -32,7 +32,9 @@ func main() {
 		log.Fatalf("ping mysql (check MYSQL_DSN and that MySQL is running): %v", err)
 	}
 
-	srv := api.New(store.New(db), dict.New(dictBase))
+	googleAPIKey := env("GOOGLE_API_KEY", "")
+	modelName := env("MODEL", "gemini-2.5-flash")
+	srv := api.New(store.New(db), dict.New(dictBase, googleAPIKey, modelName))
 	httpSrv := &http.Server{
 		Addr:              addr,
 		Handler:           srv.Routes(),

@@ -91,9 +91,9 @@ func (s *Store) SaveWord(ctx context.Context, w *model.Word) (*model.Word, error
 
 	for _, sense := range w.Senses {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO word_senses (word_id, pos, meaning_en, examples, synonyms, antonyms)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			w.ID, nullStr(sense.POS), sense.MeaningEN,
+			`INSERT INTO word_senses (word_id, pos, meaning_en, meaning_cn, examples, synonyms, antonyms)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			w.ID, nullStr(sense.POS), sense.MeaningEN, nullStr(sense.MeaningCN),
 			marshalList(sense.Examples), marshalList(sense.Synonyms), marshalList(sense.Antonyms),
 		); err != nil {
 			return nil, err
@@ -284,6 +284,43 @@ func (s *Store) Stats(ctx context.Context, tgUserID int64) (*model.Stats, error)
 		return nil, err
 	}
 	return st, nil
+}
+
+// RefreshWord updates the word's phonetic/audio and replaces all its senses.
+func (s *Store) RefreshWord(ctx context.Context, w *model.Word) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Update word table info
+	_, err = tx.ExecContext(ctx,
+		`UPDATE words SET phonetic=?, audio_url=? WHERE id=?`,
+		nullStr(w.Phonetic), nullStr(w.AudioURL), w.ID)
+	if err != nil {
+		return err
+	}
+
+	// Delete old senses
+	_, err = tx.ExecContext(ctx, `DELETE FROM word_senses WHERE word_id=?`, w.ID)
+	if err != nil {
+		return err
+	}
+
+	// Insert new senses
+	for _, sense := range w.Senses {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO word_senses (word_id, pos, meaning_en, meaning_cn, examples, synonyms, antonyms)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			w.ID, nullStr(sense.POS), sense.MeaningEN, nullStr(sense.MeaningCN),
+			marshalList(sense.Examples), marshalList(sense.Synonyms), marshalList(sense.Antonyms),
+		); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 // --- JSON helpers ---
