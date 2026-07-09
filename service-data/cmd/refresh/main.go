@@ -20,7 +20,7 @@ func main() {
 
 	dsn := env("MYSQL_DSN", "root@tcp(127.0.0.1:3306)/wordbot?parseTime=false&charset=utf8mb4")
 	apiKey := env("GOOGLE_API_KEY", "")
-	modelName := env("MODEL", "gemini-2.5-flash")
+	modelName := env("MODEL", "gemini-3.1-flash-lite")
 	dictBase := env("DICT_API_BASE", "https://api.dictionaryapi.dev/api/v2/entries/en")
 
 	if apiKey == "" {
