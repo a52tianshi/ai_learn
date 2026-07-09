@@ -21,6 +21,7 @@ func main() {
 	dsn := env("MYSQL_DSN", "root@tcp(127.0.0.1:3306)/wordbot?parseTime=false&charset=utf8mb4")
 	apiKey := env("GOOGLE_API_KEY", "")
 	modelName := env("MODEL", "gemini-2.5-flash")
+	dictBase := env("DICT_API_BASE", "https://api.dictionaryapi.dev/api/v2/entries/en")
 
 	if apiKey == "" {
 		log.Fatalf("GOOGLE_API_KEY is not set. Cannot run refresh script.")
@@ -37,7 +38,7 @@ func main() {
 	}
 
 	st := store.New(db)
-	dc := dict.New("", apiKey, modelName) // base is empty since we query Gemini
+	dc := dict.New(dictBase, apiKey, modelName)
 
 	ctx := context.Background()
 
