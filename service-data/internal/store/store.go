@@ -69,6 +69,14 @@ func (s *Store) loadSenses(ctx context.Context, wordID int64) ([]model.Sense, er
 	return out, rows.Err()
 }
 
+func truncateRune(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) > limit {
+		return string(runes[:limit])
+	}
+	return s
+}
+
 // SaveWord inserts a word and its senses in one transaction, returning the
 // word with IDs filled in.
 func (s *Store) SaveWord(ctx context.Context, w *model.Word) (*model.Word, error) {
@@ -78,9 +86,13 @@ func (s *Store) SaveWord(ctx context.Context, w *model.Word) (*model.Word, error
 	}
 	defer tx.Rollback()
 
+	text := truncateRune(w.Text, 128)
+	phonetic := truncateRune(w.Phonetic, 64)
+	audioURL := truncateRune(w.AudioURL, 255)
+
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO words (text, phonetic, audio_url) VALUES (?, ?, ?)`,
-		w.Text, nullStr(w.Phonetic), nullStr(w.AudioURL))
+		text, nullStr(phonetic), nullStr(audioURL))
 	if err != nil {
 		return nil, err
 	}
@@ -90,10 +102,21 @@ func (s *Store) SaveWord(ctx context.Context, w *model.Word) (*model.Word, error
 	}
 
 	for _, sense := range w.Senses {
+		pos := truncateRune(sense.POS, 32)
+		meaningEN := truncateRune(sense.MeaningEN, 1024)
+		meaningCN := truncateRune(sense.MeaningCN, 512)
+
+		if meaningEN == "" {
+			meaningEN = meaningCN
+		}
+		if meaningEN == "" {
+			meaningEN = "No definition available"
+		}
+
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO word_senses (word_id, pos, meaning_en, meaning_cn, examples, synonyms, antonyms)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			w.ID, nullStr(sense.POS), sense.MeaningEN, nullStr(sense.MeaningCN),
+			w.ID, nullStr(pos), meaningEN, nullStr(meaningCN),
 			marshalList(sense.Examples), marshalList(sense.Synonyms), marshalList(sense.Antonyms),
 		); err != nil {
 			return nil, err
@@ -294,10 +317,13 @@ func (s *Store) RefreshWord(ctx context.Context, w *model.Word) error {
 	}
 	defer tx.Rollback()
 
+	phonetic := truncateRune(w.Phonetic, 64)
+	audioURL := truncateRune(w.AudioURL, 255)
+
 	// Update word table info
 	_, err = tx.ExecContext(ctx,
 		`UPDATE words SET phonetic=?, audio_url=? WHERE id=?`,
-		nullStr(w.Phonetic), nullStr(w.AudioURL), w.ID)
+		nullStr(phonetic), nullStr(audioURL), w.ID)
 	if err != nil {
 		return err
 	}
@@ -310,10 +336,21 @@ func (s *Store) RefreshWord(ctx context.Context, w *model.Word) error {
 
 	// Insert new senses
 	for _, sense := range w.Senses {
+		pos := truncateRune(sense.POS, 32)
+		meaningEN := truncateRune(sense.MeaningEN, 1024)
+		meaningCN := truncateRune(sense.MeaningCN, 512)
+
+		if meaningEN == "" {
+			meaningEN = meaningCN
+		}
+		if meaningEN == "" {
+			meaningEN = "No definition available"
+		}
+
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO word_senses (word_id, pos, meaning_en, meaning_cn, examples, synonyms, antonyms)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			w.ID, nullStr(sense.POS), sense.MeaningEN, nullStr(sense.MeaningCN),
+			w.ID, nullStr(pos), meaningEN, nullStr(meaningCN),
 			marshalList(sense.Examples), marshalList(sense.Synonyms), marshalList(sense.Antonyms),
 		); err != nil {
 			return err
