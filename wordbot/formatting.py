@@ -53,7 +53,10 @@ def review_reveal(card: dict, next_interval_days: int) -> str:
             "senses": card.get("senses", []),
         }
     )
-    when = "明天" if next_interval_days <= 1 else f"{next_interval_days} 天后"
+    if next_interval_days >= 30000:
+        when = "永久记住 (已移出复习库)"
+    else:
+        when = "明天" if next_interval_days <= 1 else f"{next_interval_days} 天后"
     return f"{body}\n\n📅 下次复习:<b>{when}</b>"
 
 

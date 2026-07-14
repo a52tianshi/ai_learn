@@ -163,7 +163,7 @@ func (s *Store) GetDueWords(ctx context.Context, tgUserID int64, limit int) ([]m
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT uw.id, uw.word_id, w.text, w.phonetic
 		 FROM user_words uw JOIN words w ON w.id = uw.word_id
-		 WHERE uw.tg_user_id=? AND uw.due_at<=NOW()
+		 WHERE uw.tg_user_id=? AND uw.due_at<=NOW() AND uw.status <> 3
 		 ORDER BY uw.due_at ASC LIMIT ?`, tgUserID, limit)
 	if err != nil {
 		return nil, err
@@ -216,27 +216,53 @@ func (s *Store) SubmitReview(ctx context.Context, userWordID int64, quality int)
 		return nil, err
 	}
 
-	next := sm2.Next(cur, quality)
-	status := 1
-	if next.Interval >= masteredInterval {
-		status = 2
-	}
+	var easeFactor float64
+	var intervalDays int
+	var repetitions int
+	var status int
 
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE user_words
-		 SET ease_factor=?, interval_days=?, repetitions=?,
-		     due_at=DATE_ADD(NOW(), INTERVAL ? DAY), last_review_at=NOW(), status=?
-		 WHERE id=?`,
-		next.EaseFactor, next.Interval, next.Repetitions, next.Interval, status, userWordID,
-	); err != nil {
-		return nil, err
+	if quality == 99 {
+		// "完全记住" (Too simple / archived)
+		easeFactor = cur.EaseFactor
+		intervalDays = 36500 // 100 years
+		repetitions = cur.Repetitions + 1
+		status = 3 // 搁置 / archived
+
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE user_words
+			 SET ease_factor=?, interval_days=?, repetitions=?,
+			     due_at=DATE_ADD(NOW(), INTERVAL 36500 DAY), last_review_at=NOW(), status=?
+			 WHERE id=?`,
+			easeFactor, intervalDays, repetitions, status, userWordID,
+		); err != nil {
+			return nil, err
+		}
+	} else {
+		next := sm2.Next(cur, quality)
+		easeFactor = next.EaseFactor
+		intervalDays = next.Interval
+		repetitions = next.Repetitions
+		status = 1
+		if next.Interval >= masteredInterval {
+			status = 2
+		}
+
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE user_words
+			 SET ease_factor=?, interval_days=?, repetitions=?,
+			     due_at=DATE_ADD(NOW(), INTERVAL ? DAY), last_review_at=NOW(), status=?
+			 WHERE id=?`,
+			easeFactor, intervalDays, repetitions, intervalDays, status, userWordID,
+		); err != nil {
+			return nil, err
+		}
 	}
 
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO review_logs
 		   (user_word_id, quality, prev_interval, next_interval, prev_ef, next_ef)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		userWordID, quality, cur.Interval, next.Interval, cur.EaseFactor, next.EaseFactor,
+		userWordID, quality, cur.Interval, intervalDays, cur.EaseFactor, easeFactor,
 	); err != nil {
 		return nil, err
 	}

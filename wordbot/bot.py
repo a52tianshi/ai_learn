@@ -104,6 +104,7 @@ async def _send_review_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE
             InlineKeyboardButton("😵 忘了", callback_data=f"g:{uwid}:2"),
             InlineKeyboardButton("🤔 模糊", callback_data=f"g:{uwid}:3"),
             InlineKeyboardButton("😎 记得", callback_data=f"g:{uwid}:5"),
+            InlineKeyboardButton("👌 太简单", callback_data=f"g:{uwid}:99"),
         ]]
     )
     await chat.send_message(
