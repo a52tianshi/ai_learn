@@ -133,8 +133,8 @@ func (s *Store) SaveWord(ctx context.Context, w *model.Word) (*model.Word, error
 func (s *Store) AddToNotebook(ctx context.Context, tgUserID, wordID int64) (*model.UserWord, error) {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO user_words (tg_user_id, word_id, due_at)
-		 VALUES (?, ?, NOW())
-		 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+		 VALUES (?, ?, datetime('now'))
+		 ON CONFLICT(tg_user_id, word_id) DO NOTHING`,
 		tgUserID, wordID)
 	if err != nil {
 		return nil, err
@@ -163,7 +163,7 @@ func (s *Store) GetDueWords(ctx context.Context, tgUserID int64, limit int) ([]m
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT uw.id, uw.word_id, w.text, w.phonetic
 		 FROM user_words uw JOIN words w ON w.id = uw.word_id
-		 WHERE uw.tg_user_id=? AND uw.due_at<=NOW() AND uw.status <> 3
+		 WHERE uw.tg_user_id=? AND uw.due_at<=datetime('now') AND uw.status <> 3
 		 ORDER BY uw.due_at ASC LIMIT ?`, tgUserID, limit)
 	if err != nil {
 		return nil, err
@@ -207,7 +207,7 @@ func (s *Store) SubmitReview(ctx context.Context, userWordID int64, quality int)
 	var tgUserID, wordID int64
 	err = tx.QueryRowContext(ctx,
 		`SELECT tg_user_id, word_id, ease_factor, interval_days, repetitions
-		 FROM user_words WHERE id=? FOR UPDATE`, userWordID).
+		 FROM user_words WHERE id=?`, userWordID).
 		Scan(&tgUserID, &wordID, &cur.EaseFactor, &cur.Interval, &cur.Repetitions)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("user_word %d not found", userWordID)
@@ -231,7 +231,7 @@ func (s *Store) SubmitReview(ctx context.Context, userWordID int64, quality int)
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE user_words
 			 SET ease_factor=?, interval_days=?, repetitions=?,
-			     due_at=DATE_ADD(NOW(), INTERVAL 36500 DAY), last_review_at=NOW(), status=?
+			     due_at=datetime('now', '+36500 days'), last_review_at=datetime('now'), status=?
 			 WHERE id=?`,
 			easeFactor, intervalDays, repetitions, status, userWordID,
 		); err != nil {
@@ -250,9 +250,9 @@ func (s *Store) SubmitReview(ctx context.Context, userWordID int64, quality int)
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE user_words
 			 SET ease_factor=?, interval_days=?, repetitions=?,
-			     due_at=DATE_ADD(NOW(), INTERVAL ? DAY), last_review_at=NOW(), status=?
+			     due_at=datetime('now', ?), last_review_at=datetime('now'), status=?
 			 WHERE id=?`,
-			easeFactor, intervalDays, repetitions, intervalDays, status, userWordID,
+			easeFactor, intervalDays, repetitions, fmt.Sprintf("+%d days", intervalDays), status, userWordID,
 		); err != nil {
 			return nil, err
 		}
@@ -320,7 +320,7 @@ func (s *Store) Stats(ctx context.Context, tgUserID int64) (*model.Stats, error)
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT
 		   COUNT(*),
-		   COALESCE(SUM(due_at<=NOW()), 0),
+		   COALESCE(SUM(due_at<=datetime('now')), 0),
 		   COALESCE(SUM(status=2), 0)
 		 FROM user_words WHERE tg_user_id=?`, tgUserID).
 		Scan(&st.TotalWords, &st.DueToday, &st.Mastered); err != nil {
