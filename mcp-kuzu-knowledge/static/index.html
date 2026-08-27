@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Knowledge Graph</title>
+<script src="https://unpkg.com/vis-network@9/standalone/umd/vis-network.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+  #bar { padding: 12px; border-bottom: 1px solid #ddd; display: flex; gap: 8px; }
+  #bar input { flex: 1; padding: 6px 10px; font-size: 14px; }
+  #results { max-height: 160px; overflow-y: auto; border-bottom: 1px solid #ddd; }
+  #results div { padding: 6px 12px; cursor: pointer; }
+  #results div:hover { background: #f0f0f0; }
+  #graph { flex: 1; }
+</style>
+</head>
+<body>
+  <div id="bar">
+    <input id="search" type="text" placeholder="搜索知识点...">
+  </div>
+  <div id="results"></div>
+  <div id="graph"></div>
+
+<script>
+const searchBox = document.getElementById('search');
+const resultsBox = document.getElementById('results');
+const graphBox = document.getElementById('graph');
+let network = null;
+
+async function doSearch() {
+  const q = searchBox.value.trim();
+  resultsBox.innerHTML = '';
+  const res = await fetch(`/api/concepts?q=${encodeURIComponent(q)}`);
+  const concepts = await res.json();
+  for (const c of concepts) {
+    const row = document.createElement('div');
+    row.textContent = `${c.label} [${c.category}] (掌握度 ${c.proficiency})`;
+    row.onclick = () => showNeighbors(c.id);
+    resultsBox.appendChild(row);
+  }
+}
+
+async function showNeighbors(id) {
+  const res = await fetch(`/api/neighbors/${encodeURIComponent(id)}?depth=2`);
+  if (!res.ok) return;
+  const sub = await res.json();
+
+  const nodes = sub.nodes.map(n => ({ id: n.id, label: n.label }));
+  const edges = sub.edges.map(e => ({ from: e.from, to: e.to, label: e.relation_type, arrows: 'to' }));
+
+  if (network) network.destroy();
+  network = new vis.Network(graphBox, { nodes, edges }, {
+    physics: { solver: 'forceAtlas2Based' },
+    nodes: { shape: 'dot', size: 14 },
+    edges: { font: { size: 10 } },
+  });
+}
+
+searchBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+doSearch();
+</script>
+</body>
+</html>
