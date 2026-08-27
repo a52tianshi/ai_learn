@@ -47,6 +47,8 @@ pub struct AddConceptRequest {
     pub category: String,
     pub proficiency: i64,
     pub details: String,
+    #[serde(default)]
+    pub wikipedia_url: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -103,14 +105,20 @@ impl KnowledgeGraphServer {
         json_result(&subgraph)
     }
 
-    #[tool(description = "Add a new concept node to the personal knowledge graph")]
+    #[tool(description = "Add a new concept node to the personal knowledge graph. `details` should be the user's own understanding/notes, not a full writeup — link canonical background via `wikipedia_url` instead of duplicating it.")]
     async fn add_concept(
         &self,
         Parameters(req): Parameters<AddConceptRequest>,
     ) -> Result<CallToolResult, McpError> {
         let concept = self
             .db
-            .add_concept(&req.label, &req.category, req.proficiency, &req.details)
+            .add_concept(
+                &req.label,
+                &req.category,
+                req.proficiency,
+                &req.details,
+                &req.wikipedia_url,
+            )
             .await
             .map_err(db_err_to_mcp)?;
         json_result(&concept)

@@ -9,8 +9,10 @@
   #bar { padding: 12px; border-bottom: 1px solid #ddd; display: flex; gap: 8px; }
   #bar input { flex: 1; padding: 6px 10px; font-size: 14px; }
   #results { max-height: 160px; overflow-y: auto; border-bottom: 1px solid #ddd; }
-  #results div { padding: 6px 12px; cursor: pointer; }
+  #results div { padding: 6px 12px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
   #results div:hover { background: #f0f0f0; }
+  #results a { font-size: 12px; color: #06c; text-decoration: none; }
+  #results a:hover { text-decoration: underline; }
   #graph { flex: 1; }
 </style>
 </head>
@@ -34,7 +36,18 @@ async function doSearch() {
   const concepts = await res.json();
   for (const c of concepts) {
     const row = document.createElement('div');
-    row.textContent = `${c.label} [${c.category}] (掌握度 ${c.proficiency})`;
+    const text = document.createElement('span');
+    text.textContent = `${c.label} [${c.category}] (掌握度 ${c.proficiency})`;
+    row.appendChild(text);
+    if (c.wikipedia_url) {
+      const link = document.createElement('a');
+      link.href = c.wikipedia_url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = 'wiki ↗';
+      link.onclick = (e) => e.stopPropagation();
+      row.appendChild(link);
+    }
     row.onclick = () => showNeighbors(c.id);
     resultsBox.appendChild(row);
   }

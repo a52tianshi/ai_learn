@@ -13,6 +13,7 @@ pub struct Concept {
     pub category: String,
     pub proficiency: i64,
     pub details: String,
+    pub wikipedia_url: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -74,6 +75,7 @@ fn row_to_concept(row: &[Value]) -> Result<Concept, DbError> {
         category: as_string(&row[2])?,
         proficiency: as_i64(&row[3])?,
         details: as_string(&row[4])?,
+        wikipedia_url: as_string(&row[5])?,
     })
 }
 
@@ -105,7 +107,7 @@ impl Db {
 
         create_table_if_missing(
             &conn,
-            "CREATE NODE TABLE Concept(id STRING PRIMARY KEY, label STRING, category STRING, proficiency INT64, details STRING, created_at TIMESTAMP);",
+            "CREATE NODE TABLE Concept(id STRING PRIMARY KEY, label STRING, category STRING, proficiency INT64, details STRING, wikipedia_url STRING, created_at TIMESTAMP);",
         )?;
         create_table_if_missing(
             &conn,
@@ -126,14 +128,14 @@ impl Db {
             // everything, so an empty keyword needs its own unfiltered
             // query instead of falling through to the CONTAINS-based one.
             let mut stmt = conn
-                .prepare("MATCH (c:Concept) RETURN c.id, c.label, c.category, c.proficiency, c.details LIMIT 200;")?;
+                .prepare("MATCH (c:Concept) RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url LIMIT 200;")?;
             let result = conn.execute(&mut stmt, vec![])?;
             for row in result {
                 out.push(row_to_concept(&row)?);
             }
         } else {
             let mut stmt = conn.prepare(
-                "MATCH (c:Concept) WHERE lower(c.label) CONTAINS lower($kw) OR lower(c.details) CONTAINS lower($kw) RETURN c.id, c.label, c.category, c.proficiency, c.details;",
+                "MATCH (c:Concept) WHERE lower(c.label) CONTAINS lower($kw) OR lower(c.details) CONTAINS lower($kw) RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url;",
             )?;
             let result =
                 conn.execute(&mut stmt, vec![("kw", Value::String(keyword.to_string()))])?;
@@ -150,6 +152,7 @@ impl Db {
         category: &str,
         proficiency: i64,
         details: &str,
+        wikipedia_url: &str,
     ) -> Result<Concept, DbError> {
         if !(0..=5).contains(&proficiency) {
             return Err(DbError::InvalidInput(
@@ -159,7 +162,7 @@ impl Db {
         let id = Uuid::new_v4().to_string();
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "CREATE (c:Concept {id: $id, label: $label, category: $category, proficiency: $proficiency, details: $details, created_at: $created_at});",
+            "CREATE (c:Concept {id: $id, label: $label, category: $category, proficiency: $proficiency, details: $details, wikipedia_url: $wikipedia_url, created_at: $created_at});",
         )?;
         conn.execute(
             &mut stmt,
@@ -169,6 +172,7 @@ impl Db {
                 ("category", Value::String(category.to_string())),
                 ("proficiency", Value::Int64(proficiency)),
                 ("details", Value::String(details.to_string())),
+                ("wikipedia_url", Value::String(wikipedia_url.to_string())),
                 ("created_at", Value::Timestamp(OffsetDateTime::now_utc())),
             ],
         )?;
@@ -178,6 +182,7 @@ impl Db {
             category: category.to_string(),
             proficiency,
             details: details.to_string(),
+            wikipedia_url: wikipedia_url.to_string(),
         })
     }
 
@@ -229,7 +234,7 @@ impl Db {
         }
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "MATCH (c:Concept {id: $id}) SET c.proficiency = $level RETURN c.id, c.label, c.category, c.proficiency, c.details;",
+            "MATCH (c:Concept {id: $id}) SET c.proficiency = $level RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url;",
         )?;
         let mut result = conn.execute(
             &mut stmt,
@@ -251,7 +256,7 @@ impl Db {
         let conn = self.conn.lock().await;
 
         let mut center_stmt = conn.prepare(
-            "MATCH (c:Concept {id: $id}) RETURN c.id, c.label, c.category, c.proficiency, c.details;",
+            "MATCH (c:Concept {id: $id}) RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url;",
         )?;
         let mut center_result = conn.execute(
             &mut center_stmt,
@@ -267,7 +272,7 @@ impl Db {
         };
 
         let neighbor_query = format!(
-            "MATCH (c:Concept {{id: $id}})-[:RELATED_TO*1..{depth}]-(n:Concept) RETURN DISTINCT n.id, n.label, n.category, n.proficiency, n.details;"
+            "MATCH (c:Concept {{id: $id}})-[:RELATED_TO*1..{depth}]-(n:Concept) RETURN DISTINCT n.id, n.label, n.category, n.proficiency, n.details, n.wikipedia_url;"
         );
         let mut neighbor_stmt = conn.prepare(&neighbor_query)?;
         let neighbor_result = conn.execute(
@@ -320,11 +325,11 @@ mod tests {
     async fn empty_keyword_search_lists_all_concepts() {
         let (_dir, db) = open_test_db();
         let a = db
-            .add_concept("Rust Ownership", "language", 3, "borrow checker basics")
+            .add_concept("Rust Ownership", "language", 3, "borrow checker basics", "")
             .await
             .unwrap();
         let b = db
-            .add_concept("Kùzu", "database", 1, "Embedded graph database")
+            .add_concept("Kùzu", "database", 1, "Embedded graph database", "")
             .await
             .unwrap();
 
@@ -339,7 +344,7 @@ mod tests {
     async fn add_then_search_finds_by_label() {
         let (_dir, db) = open_test_db();
         let created = db
-            .add_concept("Rust Ownership", "language", 3, "borrow checker basics")
+            .add_concept("Rust Ownership", "language", 3, "borrow checker basics", "")
             .await
             .unwrap();
 
@@ -352,7 +357,7 @@ mod tests {
     #[tokio::test]
     async fn search_matches_details_case_insensitively() {
         let (_dir, db) = open_test_db();
-        db.add_concept("Kùzu", "database", 1, "Embedded GRAPH database")
+        db.add_concept("Kùzu", "database", 1, "Embedded GRAPH database", "")
             .await
             .unwrap();
 
@@ -361,17 +366,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn add_concept_stores_and_returns_wikipedia_url() {
+        let (_dir, db) = open_test_db();
+        let created = db
+            .add_concept(
+                "Rust",
+                "language",
+                2,
+                "my own notes",
+                "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            created.wikipedia_url,
+            "https://en.wikipedia.org/wiki/Rust_(programming_language)"
+        );
+
+        let found = db.search_concepts("Rust").await.unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].wikipedia_url, created.wikipedia_url);
+    }
+
+    #[tokio::test]
     async fn add_concept_rejects_out_of_range_proficiency() {
         let (_dir, db) = open_test_db();
-        let err = db.add_concept("X", "cat", 9, "details").await.unwrap_err();
+        let err = db.add_concept("X", "cat", 9, "details", "").await.unwrap_err();
         assert!(matches!(err, DbError::InvalidInput(_)));
     }
 
     #[tokio::test]
     async fn add_relation_links_two_existing_concepts() {
         let (_dir, db) = open_test_db();
-        let a = db.add_concept("A", "cat", 0, "").await.unwrap();
-        let b = db.add_concept("B", "cat", 0, "").await.unwrap();
+        let a = db.add_concept("A", "cat", 0, "", "").await.unwrap();
+        let b = db.add_concept("B", "cat", 0, "", "").await.unwrap();
 
         db.add_relation(&a.id, &b.id, "depends_on").await.unwrap();
     }
@@ -379,7 +407,7 @@ mod tests {
     #[tokio::test]
     async fn add_relation_errors_on_missing_concept() {
         let (_dir, db) = open_test_db();
-        let a = db.add_concept("A", "cat", 0, "").await.unwrap();
+        let a = db.add_concept("A", "cat", 0, "", "").await.unwrap();
 
         let err = db
             .add_relation(&a.id, "does-not-exist", "depends_on")
@@ -391,7 +419,7 @@ mod tests {
     #[tokio::test]
     async fn update_proficiency_changes_value() {
         let (_dir, db) = open_test_db();
-        let a = db.add_concept("A", "cat", 0, "").await.unwrap();
+        let a = db.add_concept("A", "cat", 0, "", "").await.unwrap();
 
         let updated = db.update_proficiency(&a.id, 4).await.unwrap();
         assert_eq!(updated.proficiency, 4);
@@ -410,7 +438,7 @@ mod tests {
     #[tokio::test]
     async fn update_proficiency_rejects_out_of_range() {
         let (_dir, db) = open_test_db();
-        let a = db.add_concept("A", "cat", 0, "").await.unwrap();
+        let a = db.add_concept("A", "cat", 0, "", "").await.unwrap();
         let err = db.update_proficiency(&a.id, 9).await.unwrap_err();
         assert!(matches!(err, DbError::InvalidInput(_)));
     }
@@ -418,8 +446,8 @@ mod tests {
     #[tokio::test]
     async fn get_neighbors_includes_center_and_direct_edge() {
         let (_dir, db) = open_test_db();
-        let a = db.add_concept("A", "cat", 0, "").await.unwrap();
-        let b = db.add_concept("B", "cat", 0, "").await.unwrap();
+        let a = db.add_concept("A", "cat", 0, "", "").await.unwrap();
+        let b = db.add_concept("B", "cat", 0, "", "").await.unwrap();
         db.add_relation(&a.id, &b.id, "depends_on").await.unwrap();
 
         let sub = db.get_neighbors(&a.id, 2).await.unwrap();
@@ -432,9 +460,9 @@ mod tests {
     #[tokio::test]
     async fn get_neighbors_respects_depth_limit() {
         let (_dir, db) = open_test_db();
-        let a = db.add_concept("A", "cat", 0, "").await.unwrap();
-        let b = db.add_concept("B", "cat", 0, "").await.unwrap();
-        let c = db.add_concept("C", "cat", 0, "").await.unwrap();
+        let a = db.add_concept("A", "cat", 0, "", "").await.unwrap();
+        let b = db.add_concept("B", "cat", 0, "", "").await.unwrap();
+        let c = db.add_concept("C", "cat", 0, "", "").await.unwrap();
         db.add_relation(&a.id, &b.id, "depends_on").await.unwrap();
         db.add_relation(&b.id, &c.id, "depends_on").await.unwrap();
 
