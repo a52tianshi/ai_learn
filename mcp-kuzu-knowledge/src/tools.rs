@@ -64,6 +64,17 @@ pub struct UpdateProficiencyRequest {
     pub new_level: i64,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DeleteConceptRequest {
+    pub concept_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MergeConceptsRequest {
+    pub keep_id: String,
+    pub remove_id: String,
+}
+
 #[derive(Clone)]
 pub struct KnowledgeGraphServer {
     db: Arc<Db>,
@@ -148,6 +159,31 @@ impl KnowledgeGraphServer {
             .map_err(db_err_to_mcp)?;
         json_result(&concept)
     }
+
+    #[tool(description = "Permanently delete a concept node and every RELATED_TO edge touching it. Use this to remove a genuinely wrong/unwanted node; to fix a DUPLICATE of an existing concept, prefer merge_concepts so the duplicate's edges aren't lost.")]
+    async fn delete_concept(
+        &self,
+        Parameters(req): Parameters<DeleteConceptRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        self.db
+            .delete_concept(&req.concept_id)
+            .await
+            .map_err(db_err_to_mcp)?;
+        Ok(CallToolResult::success(vec![ContentBlock::text("ok")]))
+    }
+
+    #[tool(description = "Merge a duplicate concept (`remove_id`) into the concept you want to keep (`keep_id`): every relation touching `remove_id` is re-created on `keep_id` (a relation that would become a self-loop on `keep_id` is dropped instead), then `remove_id` is deleted. Returns the surviving `keep_id` concept. Search first with search_concepts before add_concept to catch duplicates before they're created.")]
+    async fn merge_concepts(
+        &self,
+        Parameters(req): Parameters<MergeConceptsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let concept = self
+            .db
+            .merge_concepts(&req.keep_id, &req.remove_id)
+            .await
+            .map_err(db_err_to_mcp)?;
+        json_result(&concept)
+    }
 }
 
 #[tool_handler]
@@ -160,7 +196,7 @@ impl ServerHandler for KnowledgeGraphServer {
             ))
             .with_protocol_version(ProtocolVersion::V_2024_11_05)
             .with_instructions(
-                "Personal knowledge graph over a local Kùzu database. Tools: search_concepts, get_neighbors, add_concept, add_relation, update_proficiency.".to_string(),
+                "Personal knowledge graph over a local Kùzu database. Tools: search_concepts, get_neighbors, add_concept, add_relation, update_proficiency, delete_concept, merge_concepts. Search before adding a concept to avoid creating duplicates; if a duplicate already exists, use merge_concepts rather than delete_concept so its relations aren't lost.".to_string(),
             )
     }
 }

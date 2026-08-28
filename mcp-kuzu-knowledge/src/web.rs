@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{StatusCode, header},
     response::{Html, IntoResponse, Response},
 };
 use serde::Deserialize;
@@ -11,9 +11,14 @@ use serde::Deserialize;
 use crate::db::{Db, DbError};
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
+const VIS_NETWORK_JS: &str = include_str!("../static/vis-network.min.js");
 
 pub async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
+}
+
+pub async fn vis_network_js() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "application/javascript")], VIS_NETWORK_JS)
 }
 
 #[derive(Deserialize)]
@@ -44,6 +49,13 @@ pub async fn neighbors(
 ) -> Response {
     let depth = params.depth.unwrap_or(2);
     match db.get_neighbors(&id, depth).await {
+        Ok(subgraph) => Json(subgraph).into_response(),
+        Err(e) => api_error(e),
+    }
+}
+
+pub async fn full_graph(State(db): State<Arc<Db>>) -> Response {
+    match db.get_full_graph().await {
         Ok(subgraph) => Json(subgraph).into_response(),
         Err(e) => api_error(e),
     }

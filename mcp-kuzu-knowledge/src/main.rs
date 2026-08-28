@@ -35,8 +35,10 @@ async fn main() -> anyhow::Result<()> {
 
     let router = Router::new()
         .route("/", get(web::index))
+        .route("/vis-network.min.js", get(web::vis_network_js))
         .route("/api/concepts", get(web::list_concepts))
         .route("/api/neighbors/{id}", get(web::neighbors))
+        .route("/api/graph", get(web::full_graph))
         .nest_service("/mcp", mcp_service)
         .with_state(db);
 

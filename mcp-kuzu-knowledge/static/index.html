@@ -3,42 +3,101 @@
 <head>
 <meta charset="UTF-8">
 <title>Knowledge Graph</title>
-<script src="https://unpkg.com/vis-network@9/standalone/umd/vis-network.min.js"></script>
+<script src="/vis-network.min.js"></script>
 <style>
   body { font-family: system-ui, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
-  #bar { padding: 12px; border-bottom: 1px solid #ddd; display: flex; gap: 8px; }
+  #bar { padding: 12px; border-bottom: 1px solid #ddd; display: flex; gap: 8px; align-items: center; }
   #bar input { flex: 1; padding: 6px 10px; font-size: 14px; }
-  #results { max-height: 160px; overflow-y: auto; border-bottom: 1px solid #ddd; }
-  #results div { padding: 6px 12px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
-  #results div:hover { background: #f0f0f0; }
-  #results a { font-size: 12px; color: #06c; text-decoration: none; }
-  #results a:hover { text-decoration: underline; }
-  #graph { flex: 1; }
+  #bar button { padding: 6px 12px; font-size: 14px; cursor: pointer; }
+  #error-banner { display: none; padding: 8px 12px; background: #fde8e8; color: #900; font-size: 13px; }
+  .table-section { max-height: 30vh; overflow: auto; border-bottom: 1px solid #ddd; }
+  .table-section h3 { margin: 8px 12px 4px; font-size: 12px; color: #666; font-weight: normal; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+  th { position: sticky; top: 0; background: #fafafa; }
+  #concept-body tr { cursor: pointer; }
+  #concept-body tr:hover { background: #f0f0f0; }
+  #concept-body tr.selected { background: #e8f0fe; }
+  td a { color: #06c; text-decoration: none; }
+  td a:hover { text-decoration: underline; }
+  #graph { flex: 1; min-height: 200px; }
+  #graph-title { padding: 6px 12px; font-size: 12px; color: #666; border-bottom: 1px solid #eee; }
 </style>
 </head>
 <body>
   <div id="bar">
-    <input id="search" type="text" placeholder="搜索知识点...">
+    <input id="search" type="text" placeholder="按关键字过滤表格...">
+    <button id="show-all">显示全图</button>
   </div>
-  <div id="results"></div>
+  <div id="error-banner"></div>
+
+  <div class="table-section">
+    <h3>concepts</h3>
+    <table>
+      <thead>
+        <tr><th>id</th><th>label</th><th>category</th><th>掌握度</th><th>wiki</th><th>details</th><th>created_at</th></tr>
+      </thead>
+      <tbody id="concept-body"></tbody>
+    </table>
+  </div>
+
+  <div class="table-section">
+    <h3>relations（来自当前展示的图）</h3>
+    <table>
+      <thead>
+        <tr><th>from</th><th>relation_type</th><th>to</th></tr>
+      </thead>
+      <tbody id="relation-body"></tbody>
+    </table>
+  </div>
+
+  <div id="graph-title">全图</div>
   <div id="graph"></div>
 
 <script>
 const searchBox = document.getElementById('search');
-const resultsBox = document.getElementById('results');
+const conceptBody = document.getElementById('concept-body');
+const relationBody = document.getElementById('relation-body');
 const graphBox = document.getElementById('graph');
+const graphTitle = document.getElementById('graph-title');
+const showAllBtn = document.getElementById('show-all');
+const errorBanner = document.getElementById('error-banner');
 let network = null;
+let selectedRow = null;
+let labelById = {};
 
-async function doSearch() {
-  const q = searchBox.value.trim();
-  resultsBox.innerHTML = '';
-  const res = await fetch(`/api/concepts?q=${encodeURIComponent(q)}`);
-  const concepts = await res.json();
+function showError(msg) {
+  errorBanner.textContent = msg;
+  errorBanner.style.display = 'block';
+}
+
+function clearError() {
+  errorBanner.style.display = 'none';
+}
+
+function renderConceptTable(concepts) {
+  conceptBody.innerHTML = '';
   for (const c of concepts) {
-    const row = document.createElement('div');
-    const text = document.createElement('span');
-    text.textContent = `${c.label} [${c.category}] (掌握度 ${c.proficiency})`;
-    row.appendChild(text);
+    const tr = document.createElement('tr');
+
+    const idCell = document.createElement('td');
+    idCell.textContent = c.id;
+    idCell.title = c.id;
+    tr.appendChild(idCell);
+
+    const label = document.createElement('td');
+    label.textContent = c.label;
+    tr.appendChild(label);
+
+    const category = document.createElement('td');
+    category.textContent = c.category;
+    tr.appendChild(category);
+
+    const prof = document.createElement('td');
+    prof.textContent = c.proficiency;
+    tr.appendChild(prof);
+
+    const wiki = document.createElement('td');
     if (c.wikipedia_url) {
       const link = document.createElement('a');
       link.href = c.wikipedia_url;
@@ -46,31 +105,113 @@ async function doSearch() {
       link.rel = 'noopener noreferrer';
       link.textContent = 'wiki ↗';
       link.onclick = (e) => e.stopPropagation();
-      row.appendChild(link);
+      wiki.appendChild(link);
     }
-    row.onclick = () => showNeighbors(c.id);
-    resultsBox.appendChild(row);
+    tr.appendChild(wiki);
+
+    const details = document.createElement('td');
+    details.textContent = c.details;
+    details.title = c.details;
+    tr.appendChild(details);
+
+    const createdAt = document.createElement('td');
+    createdAt.textContent = c.created_at;
+    tr.appendChild(createdAt);
+
+    tr.onclick = () => {
+      if (selectedRow) selectedRow.classList.remove('selected');
+      tr.classList.add('selected');
+      selectedRow = tr;
+      showNeighbors(c.id, c.label);
+    };
+    conceptBody.appendChild(tr);
   }
 }
 
-async function showNeighbors(id) {
-  const res = await fetch(`/api/neighbors/${encodeURIComponent(id)}?depth=2`);
-  if (!res.ok) return;
-  const sub = await res.json();
+function renderRelationTable(edges) {
+  relationBody.innerHTML = '';
+  for (const e of edges) {
+    const tr = document.createElement('tr');
+    const from = document.createElement('td');
+    from.textContent = labelById[e.from] || e.from;
+    tr.appendChild(from);
+    const rel = document.createElement('td');
+    rel.textContent = e.relation_type;
+    tr.appendChild(rel);
+    const to = document.createElement('td');
+    to.textContent = labelById[e.to] || e.to;
+    tr.appendChild(to);
+    relationBody.appendChild(tr);
+  }
+}
+
+function renderGraph(sub, title) {
+  labelById = {};
+  for (const n of sub.nodes) labelById[n.id] = n.label;
+  renderRelationTable(sub.edges);
+
+  if (typeof vis === 'undefined') {
+    showError('图形库 (vis-network) 未能加载，图无法显示，但上面的表格数据是正常的。');
+    graphTitle.textContent = title + '（图形库加载失败）';
+    return;
+  }
 
   const nodes = sub.nodes.map(n => ({ id: n.id, label: n.label }));
   const edges = sub.edges.map(e => ({ from: e.from, to: e.to, label: e.relation_type, arrows: 'to' }));
 
-  if (network) network.destroy();
-  network = new vis.Network(graphBox, { nodes, edges }, {
-    physics: { solver: 'forceAtlas2Based' },
-    nodes: { shape: 'dot', size: 14 },
-    edges: { font: { size: 10 } },
-  });
+  try {
+    if (network) network.destroy();
+    network = new vis.Network(graphBox, { nodes, edges }, {
+      physics: { solver: 'forceAtlas2Based' },
+      nodes: { shape: 'dot', size: 14 },
+      edges: { font: { size: 10 } },
+    });
+    graphTitle.textContent = title;
+    clearError();
+  } catch (err) {
+    showError('渲染图形时出错: ' + err.message);
+    graphTitle.textContent = title + '（渲染失败）';
+  }
 }
 
-searchBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
-doSearch();
+async function loadTable() {
+  const q = searchBox.value.trim();
+  try {
+    const res = await fetch(`/api/concepts?q=${encodeURIComponent(q)}`);
+    if (!res.ok) { showError(`加载表格失败: HTTP ${res.status}`); return; }
+    renderConceptTable(await res.json());
+    clearError();
+  } catch (err) {
+    showError('加载表格失败: ' + err.message);
+  }
+}
+
+async function showNeighbors(id, label) {
+  try {
+    const res = await fetch(`/api/neighbors/${encodeURIComponent(id)}?depth=2`);
+    if (!res.ok) { showError(`加载邻居失败: HTTP ${res.status}`); return; }
+    renderGraph(await res.json(), `「${label}」的邻居（2 跳）`);
+  } catch (err) {
+    showError('加载邻居失败: ' + err.message);
+  }
+}
+
+async function showFullGraph() {
+  if (selectedRow) { selectedRow.classList.remove('selected'); selectedRow = null; }
+  try {
+    const res = await fetch('/api/graph');
+    if (!res.ok) { showError(`加载全图失败: HTTP ${res.status}`); return; }
+    renderGraph(await res.json(), '全图');
+  } catch (err) {
+    showError('加载全图失败: ' + err.message);
+  }
+}
+
+searchBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadTable(); });
+showAllBtn.addEventListener('click', showFullGraph);
+
+loadTable();
+showFullGraph();
 </script>
 </body>
 </html>

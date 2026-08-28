@@ -14,6 +14,7 @@ pub struct Concept {
     pub proficiency: i64,
     pub details: String,
     pub wikipedia_url: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -68,6 +69,13 @@ fn as_i64(v: &Value) -> Result<i64, DbError> {
     }
 }
 
+fn as_timestamp_string(v: &Value) -> Result<String, DbError> {
+    match v {
+        Value::Timestamp(t) => Ok(t.to_string()),
+        other => Err(DbError::Query(format!("expected TIMESTAMP, got {other:?}"))),
+    }
+}
+
 fn row_to_concept(row: &[Value]) -> Result<Concept, DbError> {
     Ok(Concept {
         id: as_string(&row[0])?,
@@ -76,6 +84,7 @@ fn row_to_concept(row: &[Value]) -> Result<Concept, DbError> {
         proficiency: as_i64(&row[3])?,
         details: as_string(&row[4])?,
         wikipedia_url: as_string(&row[5])?,
+        created_at: as_timestamp_string(&row[6])?,
     })
 }
 
@@ -96,13 +105,14 @@ pub struct Db {
 
 impl Db {
     pub fn open(path: &Path) -> Result<Self, DbError> {
+        Self::open_with_config(path, SystemConfig::default())
+    }
+
+    fn open_with_config(path: &Path, config: SystemConfig) -> Result<Self, DbError> {
         // Connection<'a> borrows Database<'a>; since this Db lives for the
         // whole process, leaking the Database to get a 'static reference is
         // the simplest way to store both together without unsafe code.
-        let database: &'static Database = Box::leak(Box::new(Database::new(
-            path,
-            SystemConfig::default(),
-        )?));
+        let database: &'static Database = Box::leak(Box::new(Database::new(path, config)?));
         let conn = Connection::new(database)?;
 
         create_table_if_missing(
@@ -128,14 +138,14 @@ impl Db {
             // everything, so an empty keyword needs its own unfiltered
             // query instead of falling through to the CONTAINS-based one.
             let mut stmt = conn
-                .prepare("MATCH (c:Concept) RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url LIMIT 200;")?;
+                .prepare("MATCH (c:Concept) RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url, c.created_at LIMIT 200;")?;
             let result = conn.execute(&mut stmt, vec![])?;
             for row in result {
                 out.push(row_to_concept(&row)?);
             }
         } else {
             let mut stmt = conn.prepare(
-                "MATCH (c:Concept) WHERE lower(c.label) CONTAINS lower($kw) OR lower(c.details) CONTAINS lower($kw) RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url;",
+                "MATCH (c:Concept) WHERE lower(c.label) CONTAINS lower($kw) OR lower(c.details) CONTAINS lower($kw) RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url, c.created_at;",
             )?;
             let result =
                 conn.execute(&mut stmt, vec![("kw", Value::String(keyword.to_string()))])?;
@@ -160,6 +170,7 @@ impl Db {
             ));
         }
         let id = Uuid::new_v4().to_string();
+        let created_at = OffsetDateTime::now_utc();
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
             "CREATE (c:Concept {id: $id, label: $label, category: $category, proficiency: $proficiency, details: $details, wikipedia_url: $wikipedia_url, created_at: $created_at});",
@@ -173,7 +184,7 @@ impl Db {
                 ("proficiency", Value::Int64(proficiency)),
                 ("details", Value::String(details.to_string())),
                 ("wikipedia_url", Value::String(wikipedia_url.to_string())),
-                ("created_at", Value::Timestamp(OffsetDateTime::now_utc())),
+                ("created_at", Value::Timestamp(created_at)),
             ],
         )?;
         Ok(Concept {
@@ -183,6 +194,7 @@ impl Db {
             proficiency,
             details: details.to_string(),
             wikipedia_url: wikipedia_url.to_string(),
+            created_at: created_at.to_string(),
         })
     }
 
@@ -234,7 +246,7 @@ impl Db {
         }
         let conn = self.conn.lock().await;
         let mut stmt = conn.prepare(
-            "MATCH (c:Concept {id: $id}) SET c.proficiency = $level RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url;",
+            "MATCH (c:Concept {id: $id}) SET c.proficiency = $level RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url, c.created_at;",
         )?;
         let mut result = conn.execute(
             &mut stmt,
@@ -256,7 +268,7 @@ impl Db {
         let conn = self.conn.lock().await;
 
         let mut center_stmt = conn.prepare(
-            "MATCH (c:Concept {id: $id}) RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url;",
+            "MATCH (c:Concept {id: $id}) RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url, c.created_at;",
         )?;
         let mut center_result = conn.execute(
             &mut center_stmt,
@@ -272,7 +284,7 @@ impl Db {
         };
 
         let neighbor_query = format!(
-            "MATCH (c:Concept {{id: $id}})-[:RELATED_TO*1..{depth}]-(n:Concept) RETURN DISTINCT n.id, n.label, n.category, n.proficiency, n.details, n.wikipedia_url;"
+            "MATCH (c:Concept {{id: $id}})-[:RELATED_TO*1..{depth}]-(n:Concept) RETURN DISTINCT n.id, n.label, n.category, n.proficiency, n.details, n.wikipedia_url, n.created_at;"
         );
         let mut neighbor_stmt = conn.prepare(&neighbor_query)?;
         let neighbor_result = conn.execute(
@@ -309,6 +321,158 @@ impl Db {
 
         Ok(Subgraph { nodes, edges })
     }
+
+    pub async fn get_full_graph(&self) -> Result<Subgraph, DbError> {
+        let conn = self.conn.lock().await;
+
+        let mut node_stmt = conn.prepare(
+            "MATCH (c:Concept) RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url, c.created_at LIMIT 500;",
+        )?;
+        let node_result = conn.execute(&mut node_stmt, vec![])?;
+        let mut nodes = Vec::new();
+        for row in node_result {
+            nodes.push(row_to_concept(&row)?);
+        }
+
+        let mut edge_stmt = conn.prepare(
+            "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept) RETURN a.id, b.id, r.relation_type LIMIT 2000;",
+        )?;
+        let edge_result = conn.execute(&mut edge_stmt, vec![])?;
+        let mut edges = Vec::new();
+        for row in edge_result {
+            edges.push(Edge {
+                from: as_string(&row[0])?,
+                to: as_string(&row[1])?,
+                relation_type: as_string(&row[2])?,
+            });
+        }
+
+        Ok(Subgraph { nodes, edges })
+    }
+
+    pub async fn delete_concept(&self, concept_id: &str) -> Result<(), DbError> {
+        let conn = self.conn.lock().await;
+
+        let mut exists_stmt = conn.prepare("MATCH (c:Concept {id: $id}) RETURN c.id;")?;
+        let mut exists_result = conn.execute(
+            &mut exists_stmt,
+            vec![("id", Value::String(concept_id.to_string()))],
+        )?;
+        if exists_result.next().is_none() {
+            return Err(DbError::NotFound(format!(
+                "concept not found: {concept_id}"
+            )));
+        }
+
+        // DETACH DELETE removes the node together with every RELATED_TO edge
+        // touching it, in one statement.
+        let mut delete_stmt = conn.prepare("MATCH (c:Concept {id: $id}) DETACH DELETE c;")?;
+        conn.execute(
+            &mut delete_stmt,
+            vec![("id", Value::String(concept_id.to_string()))],
+        )?;
+        Ok(())
+    }
+
+    /// Merges `remove_id` into `keep_id`: every RELATED_TO edge touching
+    /// `remove_id` is re-created on `keep_id` (self-loops onto `keep_id` are
+    /// dropped rather than kept), then `remove_id` is deleted. Returns the
+    /// surviving (`keep_id`) concept.
+    pub async fn merge_concepts(
+        &self,
+        keep_id: &str,
+        remove_id: &str,
+    ) -> Result<Concept, DbError> {
+        if keep_id == remove_id {
+            return Err(DbError::InvalidInput(
+                "keep_id and remove_id must be different".to_string(),
+            ));
+        }
+        let conn = self.conn.lock().await;
+
+        let mut fetch_stmt = conn.prepare(
+            "MATCH (c:Concept {id: $id}) RETURN c.id, c.label, c.category, c.proficiency, c.details, c.wikipedia_url, c.created_at;",
+        )?;
+        let mut keep_result = conn.execute(
+            &mut fetch_stmt,
+            vec![("id", Value::String(keep_id.to_string()))],
+        )?;
+        let keep_concept = match keep_result.next() {
+            Some(row) => row_to_concept(&row)?,
+            None => return Err(DbError::NotFound(format!("concept not found: {keep_id}"))),
+        };
+        let mut remove_result = conn.execute(
+            &mut fetch_stmt,
+            vec![("id", Value::String(remove_id.to_string()))],
+        )?;
+        if remove_result.next().is_none() {
+            return Err(DbError::NotFound(format!(
+                "concept not found: {remove_id}"
+            )));
+        }
+
+        let mut out_stmt = conn.prepare(
+            "MATCH (a:Concept {id: $id})-[r:RELATED_TO]->(b:Concept) RETURN b.id, r.relation_type;",
+        )?;
+        let out_result = conn.execute(
+            &mut out_stmt,
+            vec![("id", Value::String(remove_id.to_string()))],
+        )?;
+        let mut outgoing = Vec::new();
+        for row in out_result {
+            outgoing.push((as_string(&row[0])?, as_string(&row[1])?));
+        }
+
+        let mut in_stmt = conn.prepare(
+            "MATCH (a:Concept)-[r:RELATED_TO]->(b:Concept {id: $id}) RETURN a.id, r.relation_type;",
+        )?;
+        let in_result = conn.execute(
+            &mut in_stmt,
+            vec![("id", Value::String(remove_id.to_string()))],
+        )?;
+        let mut incoming = Vec::new();
+        for row in in_result {
+            incoming.push((as_string(&row[0])?, as_string(&row[1])?));
+        }
+
+        let mut create_stmt = conn.prepare(
+            "MATCH (a:Concept {id: $from_id}), (b:Concept {id: $to_id}) CREATE (a)-[:RELATED_TO {relation_type: $rt}]->(b);",
+        )?;
+        for (other_id, rt) in outgoing {
+            if other_id == keep_id {
+                continue; // drop what would become a self-loop on keep_id
+            }
+            conn.execute(
+                &mut create_stmt,
+                vec![
+                    ("from_id", Value::String(keep_id.to_string())),
+                    ("to_id", Value::String(other_id)),
+                    ("rt", Value::String(rt)),
+                ],
+            )?;
+        }
+        for (other_id, rt) in incoming {
+            if other_id == keep_id {
+                continue;
+            }
+            conn.execute(
+                &mut create_stmt,
+                vec![
+                    ("from_id", Value::String(other_id)),
+                    ("to_id", Value::String(keep_id.to_string())),
+                    ("rt", Value::String(rt)),
+                ],
+            )?;
+        }
+
+        let mut delete_stmt = conn.prepare("MATCH (c:Concept {id: $id}) DETACH DELETE c;")?;
+        conn.execute(
+            &mut delete_stmt,
+            vec![("id", Value::String(remove_id.to_string()))],
+        )?;
+
+        Ok(keep_concept)
+    }
 }
 
 #[cfg(test)]
@@ -317,7 +481,18 @@ mod tests {
 
     fn open_test_db() -> (tempfile::TempDir, Db) {
         let dir = tempfile::tempdir().unwrap();
-        let db = Db::open(&dir.path().join("testdb")).unwrap();
+        // Kùzu's default config reserves an 8TB virtual mmap per Database.
+        // `Db::open` deliberately leaks its Database (by design, for the
+        // one long-lived server instance) — inside one test binary, all the
+        // tests' leaked Databases accumulate in the same process, and past
+        // ~15-ish of them the OS refuses further 8TB reservations. Kùzu's
+        // own test suite hits the same wall and works around it with a much
+        // smaller `max_db_size`; we do the same here.
+        let db = Db::open_with_config(
+            &dir.path().join("testdb"),
+            SystemConfig::default().max_db_size(1 << 34), // 16GB, plenty for a test's handful of rows
+        )
+        .unwrap();
         (dir, db)
     }
 
@@ -473,9 +648,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_full_graph_returns_all_nodes_and_edges() {
+        let (_dir, db) = open_test_db();
+        let a = db.add_concept("A", "cat", 0, "", "").await.unwrap();
+        let b = db.add_concept("B", "cat", 0, "", "").await.unwrap();
+        let c = db.add_concept("C", "cat", 0, "", "").await.unwrap();
+        db.add_relation(&a.id, &b.id, "depends_on").await.unwrap();
+
+        let graph = db.get_full_graph().await.unwrap();
+        let node_ids: HashSet<_> = graph.nodes.iter().map(|n| n.id.clone()).collect();
+        assert_eq!(
+            node_ids,
+            HashSet::from([a.id.clone(), b.id.clone(), c.id.clone()])
+        );
+        assert_eq!(graph.edges.len(), 1);
+        assert_eq!(graph.edges[0].relation_type, "depends_on");
+    }
+
+    #[tokio::test]
     async fn get_neighbors_errors_on_missing_concept() {
         let (_dir, db) = open_test_db();
         let err = db.get_neighbors("does-not-exist", 2).await.unwrap_err();
         assert!(matches!(err, DbError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_concept_removes_node_and_its_edges() {
+        let (_dir, db) = open_test_db();
+        let a = db.add_concept("A", "cat", 0, "", "").await.unwrap();
+        let b = db.add_concept("B", "cat", 0, "", "").await.unwrap();
+        db.add_relation(&a.id, &b.id, "depends_on").await.unwrap();
+
+        db.delete_concept(&a.id).await.unwrap();
+
+        let found = db.search_concepts("A").await.unwrap();
+        assert!(found.is_empty());
+        let sub = db.get_neighbors(&b.id, 2).await.unwrap();
+        assert_eq!(sub.nodes.len(), 1);
+        assert!(sub.edges.is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_concept_errors_on_missing_concept() {
+        let (_dir, db) = open_test_db();
+        let err = db.delete_concept("does-not-exist").await.unwrap_err();
+        assert!(matches!(err, DbError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn merge_concepts_moves_edges_and_deletes_duplicate() {
+        let (_dir, db) = open_test_db();
+        let keep = db.add_concept("Keep", "cat", 2, "", "").await.unwrap();
+        let remove = db.add_concept("Remove", "cat", 0, "", "").await.unwrap();
+        let other1 = db.add_concept("Other1", "cat", 0, "", "").await.unwrap();
+        let other2 = db.add_concept("Other2", "cat", 0, "", "").await.unwrap();
+
+        db.add_relation(&remove.id, &other1.id, "x").await.unwrap();
+        db.add_relation(&other2.id, &remove.id, "y").await.unwrap();
+        // Would become a self-loop on `keep` after the merge; must be dropped.
+        db.add_relation(&keep.id, &remove.id, "dup").await.unwrap();
+
+        let merged = db.merge_concepts(&keep.id, &remove.id).await.unwrap();
+        assert_eq!(merged.id, keep.id);
+
+        let found = db.search_concepts("Remove").await.unwrap();
+        assert!(found.is_empty());
+
+        let sub = db.get_neighbors(&keep.id, 1).await.unwrap();
+        let node_ids: HashSet<_> = sub.nodes.iter().map(|n| n.id.clone()).collect();
+        assert_eq!(
+            node_ids,
+            HashSet::from([keep.id.clone(), other1.id.clone(), other2.id.clone()])
+        );
+        assert!(sub.edges.iter().all(|e| e.from != e.to));
+        assert!(
+            sub.edges
+                .iter()
+                .any(|e| e.from == keep.id && e.to == other1.id && e.relation_type == "x")
+        );
+        assert!(
+            sub.edges
+                .iter()
+                .any(|e| e.from == other2.id && e.to == keep.id && e.relation_type == "y")
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_concepts_errors_on_missing_concept() {
+        let (_dir, db) = open_test_db();
+        let keep = db.add_concept("Keep", "cat", 0, "", "").await.unwrap();
+        let err = db
+            .merge_concepts(&keep.id, "does-not-exist")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DbError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn merge_concepts_rejects_same_id() {
+        let (_dir, db) = open_test_db();
+        let a = db.add_concept("A", "cat", 0, "", "").await.unwrap();
+        let err = db.merge_concepts(&a.id, &a.id).await.unwrap_err();
+        assert!(matches!(err, DbError::InvalidInput(_)));
     }
 }

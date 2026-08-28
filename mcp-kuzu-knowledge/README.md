@@ -1,9 +1,9 @@
 # mcp-kuzu-knowledge
 
-Local Rust MCP server backed by an embedded Kùzu graph database. Exposes 5
+Local Rust MCP server backed by an embedded Kùzu graph database. Exposes 7
 tools (`search_concepts`, `get_neighbors`, `add_concept`, `add_relation`,
-`update_proficiency`) over MCP Streamable HTTP, plus a read-only web page to
-browse the graph.
+`update_proficiency`, `delete_concept`, `merge_concepts`) over MCP
+Streamable HTTP, plus a read-only web page to browse the graph.
 
 ## Prerequisites
 

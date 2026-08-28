@@ -1,2 +1,4 @@
 /target
-/data
+# Kùzu stores the database as a single file plus sibling WAL/lock files
+# (e.g. `data`, `data.wal`), not inside a `data/` directory.
+/data*
