@@ -255,16 +255,19 @@ func (c *Client) fetchGemini(ctx context.Context, text string) (*model.Word, err
 }
 
 func (c *Client) fetchBilingualFree(ctx context.Context, text string) (*model.Word, error) {
-	// Fetch English meanings (DictionaryAPI.dev) and the Chinese
-	// explanation (Youdao) concurrently rather than one after another, so
-	// the worst-case wait is one timeout instead of the sum of two.
+	// Fetch English meanings (DictionaryAPI.dev), a Datamuse fallback (also
+	// English, no API key needed, weaker data but a different upstream so
+	// it isn't affected by a DictionaryAPI.dev outage), and the Chinese
+	// explanation (Youdao) all concurrently rather than one after another,
+	// so the worst-case wait is one timeout instead of the sum of three.
 	var (
 		w             *model.Word
 		err           error
 		youdaoExplain string
+		datamuseWord  *model.Word
 	)
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		w, err = c.fetchDictionaryAPI(ctx, text)
@@ -273,14 +276,28 @@ func (c *Client) fetchBilingualFree(ctx context.Context, text string) (*model.Wo
 		defer wg.Done()
 		youdaoExplain = c.fetchYoudaoExplain(ctx, text)
 	}()
+	go func() {
+		defer wg.Done()
+		datamuseWord, _ = c.fetchDatamuse(ctx, text)
+	}()
 	wg.Wait()
 
 	if err != nil {
 		// DictionaryAPI failed -- either it genuinely has no entry (404) or
 		// it's unavailable/timed out (as happened in practice: the service
-		// accepted the connection but never sent a response). Either way,
-		// if Youdao came back with something, degrade to a Youdao-only
-		// word entry instead of failing the whole lookup.
+		// accepted the connection but never sent a response). Prefer
+		// Datamuse's entry over a Youdao-only one when we have it (it has
+		// real English definitions, Youdao-only entries duplicate the
+		// Chinese text into the English field), then merge in Youdao's
+		// Chinese explanation either way.
+		if datamuseWord != nil {
+			if youdaoExplain != "" {
+				for i := range datamuseWord.Senses {
+					datamuseWord.Senses[i].MeaningCN = extractPOSMeaning(youdaoExplain, datamuseWord.Senses[i].POS)
+				}
+			}
+			return datamuseWord, nil
+		}
 		if youdaoExplain != "" {
 			return c.fetchYoudaoWord(ctx, text, youdaoExplain)
 		}
@@ -294,6 +311,72 @@ func (c *Client) fetchBilingualFree(ctx context.Context, text string) (*model.Wo
 		}
 	}
 
+	return w, nil
+}
+
+// datamuseEntry mirrors the fields we use from Datamuse's response
+// (https://api.datamuse.com/words?sp=<word>&md=d&max=1); no API key needed.
+type datamuseEntry struct {
+	Word string   `json:"word"`
+	Defs []string `json:"defs"`
+}
+
+var datamusePOS = map[string]string{
+	"n":   "noun",
+	"v":   "verb",
+	"adj": "adjective",
+	"adv": "adverb",
+}
+
+// parseDatamuseDef splits a Datamuse def string like "n\tsome definition"
+// into a POS (mapped to the same vocabulary as the other sources; empty if
+// Datamuse's tag isn't one we recognize) and the definition text.
+func parseDatamuseDef(def string) (pos, meaning string) {
+	parts := strings.SplitN(def, "\t", 2)
+	if len(parts) != 2 {
+		return "", strings.TrimSpace(def)
+	}
+	return datamusePOS[strings.TrimSpace(parts[0])], strings.TrimSpace(parts[1])
+}
+
+func (c *Client) fetchDatamuse(ctx context.Context, text string) (*model.Word, error) {
+	u := "https://api.datamuse.com/words?sp=" + url.QueryEscape(text) + "&md=d&max=1"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("datamuse: unexpected status %d", resp.StatusCode)
+	}
+
+	var entries []datamuseEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+		return nil, fmt.Errorf("datamuse: decode: %w", err)
+	}
+	if len(entries) == 0 || !strings.EqualFold(entries[0].Word, text) || len(entries[0].Defs) == 0 {
+		return nil, ErrNotFound
+	}
+
+	w := &model.Word{Text: text}
+	for _, d := range entries[0].Defs {
+		if len(w.Senses) >= maxSenses {
+			break
+		}
+		pos, meaning := parseDatamuseDef(d)
+		if meaning == "" {
+			continue
+		}
+		w.Senses = append(w.Senses, model.Sense{POS: pos, MeaningEN: meaning})
+	}
+	if len(w.Senses) == 0 {
+		return nil, ErrNotFound
+	}
 	return w, nil
 }
 
