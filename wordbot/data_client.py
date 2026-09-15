@@ -17,7 +17,10 @@ class DataAPIError(Exception):
 
 
 class DataClient:
-    def __init__(self, base: str | None = None, timeout: float = 10.0):
+    # 20s: on a cache-miss word lookup the Go service can take a Gemini
+    # attempt (~6s) plus concurrent DictionaryAPI/Youdao calls (~6s each,
+    # in parallel) before responding; this stays comfortably above that.
+    def __init__(self, base: str | None = None, timeout: float = 20.0):
         self._client = httpx.AsyncClient(
             base_url=base or config.DATA_API_BASE, timeout=timeout
         )

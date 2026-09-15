@@ -71,11 +71,18 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except DataAPIError as e:
         await update.message.reply_text(f"服务出错了:{e}")
         return
+    except httpx.TimeoutException:
+        await update.message.reply_text(
+            f"查询 “{text}” 超时了,词典服务可能比较慢,稍后再试一下?"
+        )
+        return
 
     try:
         await _data(context).add_to_notebook(uid, word["id"])
     except DataAPIError as e:
         log.warning("add_to_notebook failed: %s", e)
+    except httpx.TimeoutException as e:
+        log.warning("add_to_notebook timed out: %s", e)
 
     await _reply_html(update, formatting.word_card(word))
 

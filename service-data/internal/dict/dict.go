@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"worddata/internal/model"
@@ -35,7 +36,15 @@ func New(base, apiKey, modelName string) *Client {
 		base:   base,
 		apiKey: apiKey,
 		model:  modelName,
-		http:   &http.Client{Timeout: 15 * time.Second},
+		// Kept short because fetchBilingualFree used to call
+		// DictionaryAPI.dev and Youdao sequentially, and the sum of two
+		// 15s timeouts (plus a possible Gemini attempt before that)
+		// could exceed the wordbot Python client's own timeout, causing
+		// a silent httpx.ReadTimeout with no reply to the user even
+		// though the lookup was still in flight. Those two calls now run
+		// concurrently (see fetchBilingualFree), so a shorter per-call
+		// timeout still gives each external API a reasonable window.
+		http: &http.Client{Timeout: 6 * time.Second},
 	}
 }
 
@@ -246,11 +255,25 @@ func (c *Client) fetchGemini(ctx context.Context, text string) (*model.Word, err
 }
 
 func (c *Client) fetchBilingualFree(ctx context.Context, text string) (*model.Word, error) {
-	// 1. Fetch English meanings
-	w, err := c.fetchDictionaryAPI(ctx, text)
-
-	// 2. Fetch Youdao Chinese explanation
-	youdaoExplain := c.fetchYoudaoExplain(ctx, text)
+	// Fetch English meanings (DictionaryAPI.dev) and the Chinese
+	// explanation (Youdao) concurrently rather than one after another, so
+	// the worst-case wait is one timeout instead of the sum of two.
+	var (
+		w             *model.Word
+		err           error
+		youdaoExplain string
+	)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		w, err = c.fetchDictionaryAPI(ctx, text)
+	}()
+	go func() {
+		defer wg.Done()
+		youdaoExplain = c.fetchYoudaoExplain(ctx, text)
+	}()
+	wg.Wait()
 
 	if err != nil {
 		// If DictionaryAPI returned 404 but Youdao has it, build a fallback word entry
