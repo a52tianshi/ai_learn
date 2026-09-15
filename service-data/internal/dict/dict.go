@@ -276,8 +276,12 @@ func (c *Client) fetchBilingualFree(ctx context.Context, text string) (*model.Wo
 	wg.Wait()
 
 	if err != nil {
-		// If DictionaryAPI returned 404 but Youdao has it, build a fallback word entry
-		if errors.Is(err, ErrNotFound) && youdaoExplain != "" {
+		// DictionaryAPI failed -- either it genuinely has no entry (404) or
+		// it's unavailable/timed out (as happened in practice: the service
+		// accepted the connection but never sent a response). Either way,
+		// if Youdao came back with something, degrade to a Youdao-only
+		// word entry instead of failing the whole lookup.
+		if youdaoExplain != "" {
 			return c.fetchYoudaoWord(ctx, text, youdaoExplain)
 		}
 		return nil, err
