@@ -16,17 +16,25 @@ def word_card(word: dict) -> str:
         head += f"  <code>{escape(phonetic)}</code>"
 
     lines = [head]
+    seen = set()
     for sense in (word.get("senses") or [])[:MAX_SENSES_SHOWN]:
-        pos = sense.get("pos") or ""
-        meaning_en = escape(sense.get("meaning_en", ""))
-        meaning_cn = escape(sense.get("meaning_cn", ""))
+        pos = sense.get("pos")
+        meaning_en = sense.get("meaning_en")
+        meaning_cn = sense.get("meaning_cn")
+        if not meaning_en and not meaning_cn:
+            continue
+        key = (pos, meaning_en, meaning_cn)
+        if key in seen:
+            continue
+        seen.add(key)
         prefix = f"<i>{escape(pos)}.</i> " if pos else ""
         if meaning_en and meaning_cn:
             lines.append(f"\n• {prefix}{meaning_en}\n  {meaning_cn}")
         else:
             meaning = meaning_en or meaning_cn
             lines.append(f"\n• {prefix}{meaning}")
-        for ex in (sense.get("examples") or [])[:1]:
+        examples = sense.get("examples") or []
+        for ex in examples[:1]:
             lines.append(f"   <i>“{escape(ex)}”</i>")
         syn = sense.get("synonyms") or []
         if syn:
