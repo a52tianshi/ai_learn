@@ -292,9 +292,7 @@ func (c *Client) fetchBilingualFree(ctx context.Context, text string) (*model.Wo
 		// Chinese explanation either way.
 		if datamuseWord != nil {
 			if youdaoExplain != "" {
-				for i := range datamuseWord.Senses {
-					datamuseWord.Senses[i].MeaningCN = extractPOSMeaning(youdaoExplain, datamuseWord.Senses[i].POS)
-				}
+				assignPOSMeanings(datamuseWord.Senses, youdaoExplain)
 			}
 			return datamuseWord, nil
 		}
@@ -306,9 +304,7 @@ func (c *Client) fetchBilingualFree(ctx context.Context, text string) (*model.Wo
 
 	// 3. Merge Chinese explanation into the senses
 	if youdaoExplain != "" {
-		for i := range w.Senses {
-			w.Senses[i].MeaningCN = extractPOSMeaning(youdaoExplain, w.Senses[i].POS)
-		}
+		assignPOSMeanings(w.Senses, youdaoExplain)
 	}
 
 	return w, nil
@@ -450,6 +446,49 @@ func (c *Client) fetchYoudaoWord(ctx context.Context, text string, explain strin
 	}
 
 	return w, nil
+}
+
+// assignPOSMeanings fills in MeaningCN for each sense from explain (Youdao's
+// suggest blob), splitting the blob for each POS into separate glosses and
+// handing out one per same-POS sense in order, instead of duplicating the
+// whole blob into every sense (which is what produced e.g. "vanity"'s 4
+// noun definitions all showing the identical Chinese text).
+func assignPOSMeanings(senses []model.Sense, explain string) {
+	glossesByPOS := map[string][]string{}
+	nextIdx := map[string]int{}
+	for i := range senses {
+		pos := senses[i].POS
+		if _, ok := glossesByPOS[pos]; !ok {
+			glossesByPOS[pos] = extractPOSMeanings(explain, pos)
+		}
+		idx := nextIdx[pos]
+		nextIdx[pos] = idx + 1
+		if idx < len(glossesByPOS[pos]) {
+			senses[i].MeaningCN = glossesByPOS[pos][idx]
+		}
+	}
+}
+
+// extractPOSMeanings is like extractPOSMeaning but splits the blob for pos
+// into its separate semicolon-delimited glosses, since Youdao packs multiple
+// distinct definitions for one part of speech into a single string.
+func extractPOSMeanings(explain string, pos string) []string {
+	blob := extractPOSMeaning(explain, pos)
+	if blob == "" {
+		return nil
+	}
+	parts := strings.Split(blob, "；")
+	if len(parts) == 1 {
+		parts = strings.Split(blob, ";")
+	}
+	var out []string
+	for _, p := range parts {
+		p = strings.Trim(p, " \t\r\n,，")
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func extractPOSMeaning(explain string, pos string) string {
