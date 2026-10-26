@@ -81,3 +81,22 @@ uv run python main.py
 ```bash
 cd service-data && go test ./...     # 含 SM-2 算法单测
 ```
+
+> 生产代码(`cmd/server/main.go`、`internal/store/store.go`)实际用的是 **SQLite**(`modernc.org/sqlite`,语句里全是 `datetime('now', ...)`),不是 MySQL。但 `internal/store/store_test.go` 是一个没跟着改的历史遗留测试,还在用 `go-sql-driver/mysql` 连 MySQL、写 `NOW()`。如果机器上恰好有 MySQL 在监听 3306(`db.Ping()` 能连上就不会 `t.Skip`),这个测试就会因为 SQL 语法不对(SQLite 写法喂给 MySQL)而报错,属于该测试本身过期、待修/待删,和当前这类改动无关,出现时不用当成新 bug 去排查。
+
+## 部署到服务器(bd 主机)笔记
+
+远端是 `ssh bd`,代码在 `~/apps/ai_learn`,Go 服务和 Python bot 分别由 `run.sh`/`stop.sh` 管理(端口 8080 + PID 文件判断是否已运行)。更新部署的正确顺序:
+
+```bash
+ssh bd "cd ~/apps/ai_learn && git pull --ff-only"   # 1. 拉代码,run.sh 不会自动 pull
+ssh bd "cd ~/apps/ai_learn && ./stop.sh"             # 2. 停掉旧进程
+ssh bd "cd ~/apps/ai_learn && ./run.sh"              # 3. 重新编译 Go 服务 + 启动两个进程
+```
+
+几个容易踩的坑:
+
+- **`run.sh` 只负责编译+启动,不会 `git pull`**。先 pull 不然等于重启了旧代码。
+- **这台机器编译慢**,`go build` 常常超过 Claude Code Bash 工具默认的 120s 超时,命令会被挪到后台执行——这是正常现象,不代表卡死,等后台任务完成通知或自己 `ps aux | grep server` / 看 `service-data.log` 确认即可,不要反复用短 `sleep` 轮询刷屏。
+- **本地 `git push` 可能因为拿不到 keychain 凭证失败**(非交互环境下 `osxkeychain` helper 读不到凭证,报 `could not read Username for 'https://github.com'`)。遇到这种情况应该请人用 `! git push origin main` 在交互终端里手动推送,而不是反复重试。
+- 部署前先在本地跑一遍改动涉及的单测(以及方便的话在远端也跑一遍),比光靠 `go build` 过了就当没问题更稳妥。
