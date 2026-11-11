@@ -1,6 +1,21 @@
 # Wordbot 生产部署
 
-目标主机：Ubuntu `bd-inst-mwNVXeuFnH`（SSH 别名 `bd`），运行用户/组 `chenquan`，应用根目录 `/home/chenquan/apps/ai_learn`。本文命令供运维人员审核后在服务器执行；本次只新增部署文件，没有执行部署。
+目标主机：Ubuntu `bd-inst-mwNVXeuFnH`（SSH 别名 `bd`），运行用户/组 `chenquan`，应用根目录 `/home/chenquan/apps/ai_learn`。
+
+## 当前生产实际运行方式（2026-11-11 已上线）
+
+这台机器**没有免密 sudo**，systemd unit 安装不了，所以实际生效的是「nohup + 用户级 cron」：
+
+| 组件 | 现状 |
+|---|---|
+| 进程 | `run.sh` 启动，`uv run --no-dev python main.py` 与 `./server`，pid 写 `wordbot.pid` / `service-data.pid` |
+| 开机自启 | `@reboot sleep 45 && cd /home/chenquan/apps/ai_learn && ./run.sh` |
+| 自愈 | `*/5 * * * * /home/chenquan/apps/ai_learn/deploy/watchdog.sh`（健康则静默，不健康则 stop+run 一次并记 `logs/watchdog.log`） |
+| 日志 | 仍是 nohup 重定向到 `wordbot.log` / `service-data.log`；**每次重启会被 `>` 截断** |
+| 数据服务绑定 | `.env` 里 `HTTP_ADDR=127.0.0.1:8080`，只监听回环 |
+| 二进制 | bd 上**没有 Go 工具链**，`server` 由本地 `GOOS=linux GOARCH=amd64 go build` 后 scp，`run.sh` 只在 `FORCE_BUILD=1` 时重编译 |
+
+本目录下的两个 systemd unit 是给「以后拿到 root」准备的，未启用。届时按下面「从 nohup 切到 systemd」一节切换，并**先删掉 crontab 里的那两条**，否则会和 unit 抢同一个 token（409 Conflict）。
 
 ## 远端已核实的事实
 
