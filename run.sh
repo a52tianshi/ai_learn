@@ -94,7 +94,21 @@ echo "  • 正在后台启动 Python 单词本机器人..."
 # Load environment variables from .env if exists
 load_env ".env"
 
-nohup uv run --no-dev python main.py > wordbot.log 2>&1 &
+# 非登录 shell 的 PATH 通常不含 ~/.local/bin，裸 uv 会 nohup 失败。
+# 优先用 PATH 里的 uv，找不到再退回用户级安装位置。
+UV_BIN=$(command -v uv 2>/dev/null || true)
+if [ -z "$UV_BIN" ]; then
+    for cand in "$HOME/.local/bin/uv" /usr/local/bin/uv /usr/bin/uv; do
+        if [ -x "$cand" ]; then UV_BIN="$cand"; break; fi
+    done
+fi
+if [ -z "$UV_BIN" ]; then
+    echo "  ❌ 找不到 uv，无法启动 Python 机器人。"
+    exit 1
+fi
+echo "  • 使用 uv: $UV_BIN"
+
+nohup "$UV_BIN" run --no-dev python main.py > wordbot.log 2>&1 &
 PY_PID=$!
 echo $PY_PID > "$PID_FILE"
 echo "  • Python 单词本机器人启动成功，PID: $PY_PID"
