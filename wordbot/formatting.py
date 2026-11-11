@@ -17,16 +17,24 @@ def word_card(word: dict) -> str:
 
     lines = [head]
     seen = set()
-    for sense in (word.get("senses") or [])[:MAX_SENSES_SHOWN]:
+    shown = 0
+    # 先去重再计数:重复释义不应占用 MAX_SENSES_SHOWN 的名额
+    for sense in word.get("senses") or []:
+        if shown >= MAX_SENSES_SHOWN:
+            break
         pos = sense.get("pos")
-        meaning_en = sense.get("meaning_en")
-        meaning_cn = sense.get("meaning_cn")
+        meaning_en = (sense.get("meaning_en") or "").strip()
+        meaning_cn = (sense.get("meaning_cn") or "").strip()
         if not meaning_en and not meaning_cn:
             continue
-        key = (pos, meaning_en, meaning_cn)
+        # 同一词性 + 同一释义只展示一次(2026-10-26 有道中文释义重复的回归护栏)
+        key = ((pos or "").strip().lower(), meaning_en, meaning_cn)
         if key in seen:
             continue
         seen.add(key)
+        shown += 1
+        # 释义来自外部词典 / LLM,必须转义,否则 < > & 会破坏 HTML 解析
+        meaning_en, meaning_cn = escape(meaning_en), escape(meaning_cn)
         prefix = f"<i>{escape(pos)}.</i> " if pos else ""
         if meaning_en and meaning_cn:
             lines.append(f"\n• {prefix}{meaning_en}\n  {meaning_cn}")

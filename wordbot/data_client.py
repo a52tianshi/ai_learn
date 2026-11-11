@@ -59,10 +59,18 @@ class DataClient:
         data = await self._json(resp)
         return data.get("cards") or []
 
-    async def submit_review(self, user_word_id: int, quality: int) -> dict:
-        resp = await self._client.post(
-            "/reviews", json={"user_word_id": user_word_id, "quality": quality}
-        )
+    async def submit_review(
+        self, user_word_id: int, quality: int, tg_user_id: int | None = None
+    ) -> dict:
+        """提交一次复习评分。
+
+        tg_user_id 推荐总是传:服务端会校验该 user_word 是否属于此用户,
+        不匹配返回 404(→ WordNotFound)。不传则走旧的兼容路径、不做归属校验。
+        """
+        body: dict[str, int] = {"user_word_id": user_word_id, "quality": quality}
+        if tg_user_id is not None:  # 0 也照传,由服务端校验
+            body["tg_user_id"] = tg_user_id
+        resp = await self._client.post("/reviews", json=body)
         return await self._json(resp)
 
     # --- 推荐阅读 ---
