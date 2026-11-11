@@ -1,0 +1,36 @@
+[Unit]
+Description=Wordbot Go data service
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=chenquan
+Group=chenquan
+# 已核实：远端进程 /proc/501297/cwd -> /home/chenquan/apps/ai_learn/service-data。
+# 保留原 cwd，避免 ./wordbot.db 指向新空库。
+WorkingDirectory=/home/chenquan/apps/ai_learn/service-data
+EnvironmentFile=-/home/chenquan/apps/ai_learn/.env
+# 系统级 unit 默认 HOME=/root，与 Python 服务同理，显式指回运行用户。
+Environment=HOME=/home/chenquan
+Environment=XDG_CACHE_HOME=/home/chenquan/.cache
+# 874MB 主机的初始软预算，可由 .env 中 GOMEMLIMIT 覆盖；不是 RSS 硬上限。
+Environment=GOMEMLIMIT=192MiB
+Environment=HTTP_ADDR=127.0.0.1:8080
+# 已核实：/proc/501297/exe -> /home/chenquan/apps/ai_learn/service-data/server，预编译二进制。
+ExecStart=/home/chenquan/apps/ai_learn/service-data/server
+Restart=always
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wordbot-data
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

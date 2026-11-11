@@ -1,0 +1,37 @@
+[Unit]
+Description=Wordbot Telegram long-polling bot
+Wants=network-online.target wordbot-data.service
+After=network-online.target wordbot-data.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=chenquan
+Group=chenquan
+WorkingDirectory=/home/chenquan/apps/ai_learn
+EnvironmentFile=-/home/chenquan/apps/ai_learn/.env
+# 系统级 unit 默认 HOME=/root，uv 会把缓存写到 /root/.cache 并失败；
+# 必须显式指回运行用户的家目录。
+Environment=HOME=/home/chenquan
+Environment=XDG_CACHE_HOME=/home/chenquan/.cache
+Environment=PYTHONUNBUFFERED=1
+# --no-dev：生产机不需要 pytest 等开发依赖，避免每次启动同步 dev 组。
+# uv 实测路径 /home/chenquan/.local/bin/uv（bash -lc which uv）；非登录 shell 的 PATH 不含它，
+# 必须写绝对路径，不能写裸 uv 或 ~。
+ExecStart=/home/chenquan/.local/bin/uv run --no-dev python main.py
+Restart=always
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+# journald 管理 stdout/stderr 和保留策略，避免 nohup 无限追加 wordbot.log。
+# 切换后使用 LOG_SOURCE=journal 运行健康检查；旧 wordbot.log 只用于历史日志。
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=wordbot
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

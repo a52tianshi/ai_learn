@@ -1,0 +1,13 @@
+/home/chenquan/apps/ai_learn/wordbot.log /home/chenquan/apps/ai_learn/service-data.log {
+    daily
+    rotate 7
+    maxsize 50M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    # nohup 重定向的进程持有文件句柄，不能通过 rename 后通知进程 reopen。
+    # copytruncate 的复制与截断之间可能丢少量日志；兼容遗留 nohup/回滚。
+    copytruncate
+    su chenquan chenquan
+}
