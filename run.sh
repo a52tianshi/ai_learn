@@ -79,7 +79,7 @@ echo "  • 正在后台启动 Python 单词本机器人..."
 # Load environment variables from .env if exists
 load_env ".env"
 
-nohup uv run python main.py > wordbot.log 2>&1 &
+nohup uv run --no-dev python main.py > wordbot.log 2>&1 &
 PY_PID=$!
 echo $PY_PID > "$PID_FILE"
 echo "  • Python 单词本机器人启动成功，PID: $PY_PID"
