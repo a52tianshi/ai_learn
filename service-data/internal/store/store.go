@@ -155,6 +155,23 @@ func (s *Store) getUserWord(ctx context.Context, tgUserID, wordID int64) (*model
 	return uw, nil
 }
 
+// GetUserWordByIDAndUser 按卡片 ID 和用户 ID 查询；不存在或归属不匹配均返回 nil。
+func (s *Store) GetUserWordByIDAndUser(ctx context.Context, userWordID, tgUserID int64) (*model.UserWord, error) {
+	uw := &model.UserWord{}
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tg_user_id, word_id, ease_factor, interval_days, repetitions, due_at, status
+		 FROM user_words WHERE id=? AND tg_user_id=?`, userWordID, tgUserID).
+		Scan(&uw.ID, &uw.TgUserID, &uw.WordID, &uw.EaseFactor, &uw.IntervalDays,
+			&uw.Repetitions, &uw.DueAt, &uw.Status)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return uw, nil
+}
+
 // GetDueWords returns up to limit cards that are due now, oldest first.
 func (s *Store) GetDueWords(ctx context.Context, tgUserID int64, limit int) ([]model.DueCard, error) {
 	if limit <= 0 {

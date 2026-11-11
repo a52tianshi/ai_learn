@@ -2,26 +2,45 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"worddata/internal/dict"
 	"worddata/internal/model"
-	"worddata/internal/store"
 )
 
-// Server bundles dependencies and implements http.Handler.
-type Server struct {
-	store *store.Store
-	dict  *dict.Client
+// dataStore 定义 HTTP 层所需的存储能力，便于注入无数据库的测试替身。
+type dataStore interface {
+	GetWordByText(context.Context, string) (*model.Word, error)
+	SaveWord(context.Context, *model.Word) (*model.Word, error)
+	AddToNotebook(context.Context, int64, int64) (*model.UserWord, error)
+	GetDueWords(context.Context, int64, int) ([]model.DueCard, error)
+	GetUserWordByIDAndUser(context.Context, int64, int64) (*model.UserWord, error)
+	SubmitReview(context.Context, int64, int) (*model.UserWord, error)
+	GetRecentWords(context.Context, int64, int) ([]model.Word, error)
+	SaveReading(context.Context, *model.Reading) (*model.Reading, error)
+	Stats(context.Context, int64) (*model.Stats, error)
 }
 
-// New wires a Server.
-func New(st *store.Store, dc *dict.Client) *Server {
+// dictionary 定义查词能力，测试时无需访问上游。
+type dictionary interface {
+	Fetch(context.Context, string) (*model.Word, error)
+}
+
+// Server 封装依赖并提供 HTTP 接口。
+type Server struct {
+	store dataStore
+	dict  dictionary
+}
+
+// New 注入存储和词典依赖。
+func New(st dataStore, dc dictionary) *Server {
 	return &Server{store: st, dict: dc}
 }
 
@@ -45,11 +64,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // GET /words/{text}
 func (s *Server) handleLookup(w http.ResponseWriter, r *http.Request) {
-	text := normalize(r.PathValue("text"))
-	if text == "" {
+	raw := r.PathValue("text")
+	if raw == "" {
 		writeErr(w, http.StatusBadRequest, "empty word")
 		return
 	}
+	// 先校验原始输入，禁止通过去空格等规范化绕过白名单。
+	if !validWord(raw) {
+		writeErr(w, http.StatusBadRequest, "invalid word")
+		return
+	}
+	text := normalize(raw)
 	ctx := r.Context()
 
 	cached, err := s.store.GetWordByText(ctx, text)
@@ -116,11 +141,12 @@ func (s *Server) handleDue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"cards": cards})
 }
 
-// POST /reviews  {user_word_id, quality}
+// POST /reviews 接收 {user_word_id, quality, tg_user_id（可选）}。
 func (s *Server) handleReview(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserWordID int64 `json:"user_word_id"`
-		Quality    int   `json:"quality"`
+		UserWordID int64  `json:"user_word_id"`
+		TgUserID   *int64 `json:"tg_user_id"`
+		Quality    int    `json:"quality"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -128,6 +154,25 @@ func (s *Server) handleReview(w http.ResponseWriter, r *http.Request) {
 	if req.UserWordID == 0 {
 		writeErr(w, http.StatusBadRequest, "user_word_id required")
 		return
+	}
+	// 仅接受现有业务评分，99 表示“太简单”。
+	switch req.Quality {
+	case 2, 3, 5, 99:
+	default:
+		writeErr(w, http.StatusBadRequest, "invalid quality")
+		return
+	}
+	// 兼容旧客户端；提供用户 ID 时必须验证归属，零值也不能跳过。
+	if req.TgUserID != nil {
+		card, err := s.store.GetUserWordByIDAndUser(r.Context(), req.UserWordID, *req.TgUserID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if card == nil {
+			writeErr(w, http.StatusNotFound, "user_word not found")
+			return
+		}
 	}
 	uw, err := s.store.SubmitReview(r.Context(), req.UserWordID, req.Quality)
 	if err != nil {
@@ -185,6 +230,14 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- helpers ---
+
+// 单词仅包含 ASCII 字母，连字符和撇号只能位于字母之间。
+var wordPattern = regexp.MustCompile(`^[A-Za-z]+(?:[-'][A-Za-z]+)*$`)
+
+// validWord 独立校验原始单词，长度包含内部标点。
+func validWord(text string) bool {
+	return len(text) >= 1 && len(text) <= 64 && wordPattern.MatchString(text)
+}
 
 func normalize(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 

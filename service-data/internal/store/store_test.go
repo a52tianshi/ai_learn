@@ -12,7 +12,8 @@ import (
 func TestQuality99ArchivesWord(t *testing.T) {
 	dsn := os.Getenv("MYSQL_DSN")
 	if dsn == "" {
-		dsn = "root@tcp(127.0.0.1:3306)/wordbot?parseTime=false&charset=utf8mb4"
+		// 仅显式配置测试数据库时运行，避免默认访问本机常驻 MySQL。
+		t.Skip("MYSQL_DSN 未设置，跳过 MySQL 集成测试")
 	}
 
 	db, err := sql.Open("mysql", dsn)
