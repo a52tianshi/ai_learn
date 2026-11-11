@@ -42,14 +42,29 @@ echo "正在检查 Go 数据服务 (端口 8080)..."
 if lsof -i :8080 > /dev/null 2>&1; then
     echo "  • Go 数据服务已经在运行中。"
 else
-    echo "  • 正在编译 Go 数据服务..."
+    echo "  • 正在准备 Go 数据服务二进制..."
     cd service-data
     load_env "../.env"
-    
-    if ! go build -o server cmd/server/main.go; then
-        echo "  ❌ Go 数据服务编译失败！请检查编译错误。"
-        cd ..
-        exit 1
+
+    # 生产机上没有 Go 工具链：二进制由本地交叉编译后 scp 上来。
+    # 只有显式 FORCE_BUILD=1，或本地有 go 且二进制缺失时，才真正编译。
+    if [ ! -x ./server ] || [ "${FORCE_BUILD:-0}" = "1" ]; then
+        if command -v go > /dev/null 2>&1; then
+            echo "  • 正在编译 Go 数据服务..."
+            if ! go build -o server ./cmd/server; then
+                echo "  ❌ Go 数据服务编译失败！请检查编译错误。"
+                cd ..
+                exit 1
+            fi
+        elif [ -x ./server ]; then
+            echo "  • 未安装 go，沿用现有 server 二进制（用 FORCE_BUILD=1 可强制重编译）"
+        else
+            echo "  ❌ 未找到 go，且没有可执行的 server 二进制。"
+            cd ..
+            exit 1
+        fi
+    else
+        echo "  • 使用现有 server 二进制（FORCE_BUILD=1 可强制重编译）"
     fi
     
     echo "  • 正在后台启动 Go 数据服务..."
